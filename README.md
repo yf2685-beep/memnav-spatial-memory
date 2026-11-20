@@ -2,7 +2,7 @@
 
 **面向图像目标导航的空间记忆研究：流式 KV cache、历史检索与扩散轨迹规划。**
 
-How can a robot use a place it saw earlier to navigate toward a goal image? This research workspace connects a frozen **LingBot-Map** streaming visual backbone with goal retrieval, geometric pose reasoning and a diffusion navigation policy. It brings together the `InternNav` training pipeline, `MemNavData` episode generation and the `NavDP` evaluation framework.
+How can a robot use a place it saw earlier to navigate toward a goal image? This research workspace integrates two complementary ViT-based visual pathways: a frozen **LingBot-Map** streaming memory backbone and a trainable **DINOv2-S image-goal branch**. Goal retrieval, geometric pose reasoning and a diffusion policy connect those representations to navigation. The project combines the `InternNav` training pipeline, `MemNavData` episode generation and online navigation evaluation through the `NavDP` framework.
 
 This is a portfolio and development fork of [glbreeze/Nav](https://github.com/glbreeze/Nav). The shared research implementation and upstream models retain their original attribution; individual changes are identified below.
 
@@ -16,6 +16,7 @@ This is a portfolio and development fork of [glbreeze/Nav](https://github.com/gl
 | --- | --- | --- |
 | Streaming visual memory | Frozen LingBot-Map front-end with scale-frame, historical-special-token and recent-window KV storage | Stateful attention, temporal indexing and cache reuse |
 | Goal retrieval | DINO descriptors, candidate masks, ranking and revisit/novel gating | Matching a target view against observation history |
+| Image-goal visual branch | Trainable DINOv2-S jointly encodes the current and goal images | Integrating a second visual pathway for novel or overlapping views |
 | Geometric conditioning | Cached current pose, warm goal replay and relative-pose readout | Coordinate conventions and geometry-aware model interfaces |
 | Trajectory prediction | Trainable heads and a diffusion decoder; configured prediction horizon of 24 waypoints | Combining learned visual and geometric representations |
 | Data and training | Multi-leg episodes, precomputed features, batch processing and checkpointed training | Reproducible research pipelines |
@@ -33,14 +34,47 @@ Here, KV cache holds **visual attention state across observation frames**. The t
 
 The full-patch window is bounded, but historical special-token storage grows with trajectory length. Cache reuse does not by itself establish constant memory use or a measured inference speedup. These are design choices to profile, not performance claims.
 
-## My traceable changes
+## My contribution — Yuxuan / Esther Feng
+
+My main responsibility was **model integration: KV cache, the data pipeline and training**. I worked on connecting the two ViT-based pathways into the navigation policy and aligning the interfaces between observation data, cached visual features, trainable modules and trajectory outputs. The project also includes online navigation evaluation, which provides the setting for checking the integrated policy beyond offline training.
+
+| Area I worked on | Integration responsibility |
+| --- | --- |
+| KV cache | Connect the streaming visual-memory interface to the policy, with consistent history, local-window and goal-context handling |
+| Data pipeline | Connect trajectory images, precomputed features and action labels to the training batches |
+| Two visual pathways | Align the memory/geometry and image-goal branch outputs with the token representation consumed by the diffusion decoder |
+| Training | Connect the data loader, frozen and trainable modules, losses and training configuration into a working training pipeline |
+
+This work emphasizes **research-code integration, tensor and data-interface alignment, stateful model execution, and training/debugging across components**. The pretrained backbones and shared research architecture retain their original attribution.
+
+### How the two visual pathways meet
+
+```mermaid
+flowchart LR
+    H[Observation history] --> L[Frozen LingBot-Map / KV cache]
+    G[Goal image] --> R[History retrieval and goal replay]
+    L --> R
+    L --> C[Current visual and geometry tokens]
+    R --> P[Relative-pose / revisit tokens]
+    I[Current image] --> N[Trainable DINOv2-S image-goal branch]
+    G --> N
+    N --> V[Novel-view tokens]
+    C --> D[Diffusion trajectory decoder]
+    P --> D
+    V --> D
+    D --> W[Local waypoints]
+```
+
+In the checked-in policy, `NovelBranch` concatenates current and goal RGB images into a six-channel input, extracts patch tokens and compresses them. `MemNavNet` projects the streaming branch's visual/geometry features into the same decoder token dimension and combines them with revisit and novel-view tokens. The integration therefore happens through explicit feature and token interfaces. See [the policy implementation](InternNav/internnav/model/basemodel/memnav/memnav_policy.py).
+
+### Additional fixes visible in this fork
 
 The fork includes a dedicated [`fix/rotation-frame-conjugation` branch](https://github.com/yf2685-beep/memnav-spatial-memory/tree/fix/rotation-frame-conjugation) with commits under `yf2685-beep`:
 
 - [Action-label coordinate correction](https://github.com/yf2685-beep/memnav-spatial-memory/commit/0e9606d): adjusts the MemNav loader's rotation convention so forward motion is retained in the planar action labels, with a legacy-mode switch for comparisons.
 - [Environment and short-run support](https://github.com/yf2685-beep/memnav-spatial-memory/commit/c2e004d): makes the Open3D import optional and adds trajectory/step limits for diagnostic training runs.
 
-These changes demonstrate data-label diagnosis, coordinate-frame reasoning and research-environment debugging. They are on that branch; the current `main` branch has a separate upstream pose-convention fix and should not be described as containing a merge of this branch. The shared KV-cache architecture is credited to the research project, not claimed here as an individual implementation.
+These commits provide additional examples of data-label diagnosis, coordinate-frame reasoning and research-environment debugging alongside the integration responsibilities above. They are on that branch; the current `main` branch has a separate upstream pose-convention fix and does not contain a merge of this branch.
 
 ## Reading guide
 
